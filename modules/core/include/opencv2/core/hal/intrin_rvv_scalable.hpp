@@ -1797,14 +1797,14 @@ inline void v_pack_store(hfloat* ptr, const v_float32& v)
 #else
 inline v_float32 v_load_expand(const hfloat* ptr)
 {
-    float buf[32];
+    float buf[64];
     for( int i = 0; i < VTraits<v_float32>::vlanes(); i++ ) buf[i] = (float)ptr[i];
     return v_load(buf);
 }
 
 inline void v_pack_store(hfloat* ptr, const v_float32& v)
 {
-    float buf[32];
+    float buf[64];
     v_store(buf, v);
     for( int i = 0; i < VTraits<v_float32>::vlanes(); i++ ) ptr[i] = hfloat(buf[i]);
 }
