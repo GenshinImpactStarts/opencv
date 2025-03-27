@@ -21,9 +21,10 @@ enum RVV_LMUL
     LMUL_f2,
     LMUL_f4,
     LMUL_f8,
+    LMUL_None, // Used for RVV<VecType>
 };
 
-template <typename T, RVV_LMUL LMUL>
+template <typename T, RVV_LMUL LMUL = LMUL_None>
 struct RVV;
 
 // -------------------------------Supported types--------------------------------
@@ -91,6 +92,9 @@ using RVV_F64M2 = struct RVV<double, LMUL_2>;
 using RVV_F64M4 = struct RVV<double, LMUL_4>;
 using RVV_F64M8 = struct RVV<double, LMUL_8>;
 
+template <typename RVV_T, size_t seg>
+struct RVV_Seg;
+
 // Only for dst type lmul >= 1
 template <typename Dst_T, typename RVV_T>
 using RVV_SameLen =
@@ -132,6 +136,18 @@ static inline VecType vload_stride(const ElemType* ptr, ptrdiff_t unit, size_t v
 static inline VecType vload_stride(BoolType vm, const ElemType* ptr, ptrdiff_t unit, size_t vl) {    \
     return __riscv_vlse##EEW(vm, ptr, unit, vl);                                                     \
 }                                                                                                    \
+template <size_t seg>                                                                                \
+static inline typename RVV_Seg<RVV<ElemType, lmul>, seg>::VecType                                    \
+    vload_seg(const ElemType* ptr, size_t vl);                                                       \
+template <size_t seg>                                                                                \
+static inline typename RVV_Seg<RVV<ElemType, lmul>, seg>::VecType                                    \
+    vload_seg(BoolType vm, const ElemType* ptr, size_t vl);                                          \
+template <size_t seg>                                                                                \
+static inline typename RVV_Seg<RVV<ElemType, lmul>, seg>::VecType                                    \
+    vload_sseg(const ElemType* ptr, ptrdiff_t unit, size_t vl);                                      \
+template <size_t seg>                                                                                \
+static inline typename RVV_Seg<RVV<ElemType, lmul>, seg>::VecType                                    \
+    vload_sseg(BoolType vm, const ElemType* ptr, ptrdiff_t unit, size_t vl);                         \
 static inline void vstore(ElemType* ptr, VecType v, size_t vl) {                                     \
     __riscv_vse##EEW(ptr, v, vl);                                                                    \
 }                                                                                                    \
@@ -144,12 +160,24 @@ static inline void vstore_stride(ElemType* ptr, ptrdiff_t unit, VecType v, size_
 static inline void vstore_stride(BoolType vm, ElemType* ptr, ptrdiff_t unit, VecType v, size_t vl) { \
     __riscv_vsse##EEW(vm, ptr, unit, v, vl);                                                         \
 }                                                                                                    \
+template <typename SegType>                                                                          \
+static inline void vstore_seg(ElemType* ptr, SegType v, size_t vl);                                  \
+template <typename SegType>                                                                          \
+static inline void vstore_seg(BoolType vm, ElemType* ptr, SegType v, size_t vl);                     \
+template <typename SegType>                                                                          \
+static inline void vstore_sseg(ElemType* ptr, ptrdiff_t unit, SegType v, size_t vl);                 \
+template <typename SegType>                                                                          \
+static inline void vstore_sseg(BoolType vm, ElemType* ptr, ptrdiff_t unit, SegType v, size_t vl);    \
 static inline VecType vundefined() { return __riscv_vundefined_##TYPE##LMUL(); }                     \
 static inline VecType vmv(ElemType a, size_t vl) {                                                   \
     return __riscv_v##IS_F##mv_v_##X_OR_F##_##TYPE##LMUL(a, vl);                                     \
 }                                                                                                    \
 static inline VecType vmv_s(ElemType a, size_t vl) {                                                 \
     return __riscv_v##IS_F##mv_s_##X_OR_F##_##TYPE##LMUL(a, vl);                                     \
+}                                                                                                    \
+template <size_t index, typename SegType>                                                            \
+static inline VecType vget(SegType seg) {                                                            \
+    return __riscv_vget_##TYPE##LMUL(seg, index);                                                    \
 }                                                                                                    \
 HAL_RVV_SIZE_RELATED_CUSTOM(EEW, TYPE, LMUL)
 
@@ -276,7 +304,10 @@ static inline BaseType vredsum(VecType vs2, BaseType vs1, size_t vl) {          
     )                                                      \
     {                                                      \
         return v;                                          \
-    }
+    }                                                      \
+                                                           \
+    template <>                                            \
+    struct RVV<v##VEC_TYPE##LMUL##_t> : RVV<ELEM_TYPE, LMUL_TYPE> {};
 
 // -------------------------------Define all types--------------------------------
 
@@ -589,6 +620,86 @@ HAL_RVV_CVT(uint16_t, int16_t, u16, i16, LMUL_f4, mf4)
 HAL_RVV_CVT( uint8_t,  int8_t,  u8,  i8, LMUL_f8, mf8)
 
 #undef HAL_RVV_CVT
+
+// -------------------------------Define seg vload/vstore--------------------------------
+
+#define HAL_RVV_SEG(RVV_T, SEG_T, SEG, SEG_EEW, TYPE)                                        \
+    template <>                                                                              \
+    struct RVV_Seg<RVV_T, SEG> {using VecType = SEG_T;};                                     \
+    template <>                                                                              \
+    inline SEG_T RVV_T::vload_seg<SEG>(const ElemType* ptr, size_t vl) {                     \
+        return __riscv_vl##SEG_EEW##_v_##TYPE(ptr, vl);                                      \
+    }                                                                                        \
+    template <>                                                                              \
+    inline SEG_T RVV_T::vload_seg<SEG>(BoolType vm, const ElemType* ptr, size_t vl) {        \
+        return __riscv_vl##SEG_EEW##_v_##TYPE##_m(vm, ptr, vl);                              \
+    }                                                                                        \
+    template <>                                                                              \
+    inline SEG_T RVV_T::vload_sseg<SEG>(const ElemType* ptr, ptrdiff_t unit, size_t vl) {    \
+        return __riscv_vls##SEG_EEW##_v_##TYPE(ptr, unit, vl);                               \
+    }                                                                                        \
+    template <>                                                                              \
+    inline SEG_T RVV_T::vload_sseg<SEG>(BoolType vm,                                         \
+                                        const ElemType* ptr,  ptrdiff_t unit, size_t vl) {   \
+        return __riscv_vls##SEG_EEW##_v_##TYPE##_m(vm, ptr, unit, vl);                       \
+    }
+
+#define HAL_RVV_SEG_ALL_TYPE(LMUL_NUM)                                               \
+    HAL_RVV_SEG_TO_MAX( RVV_U8M##LMUL_NUM,   vuint8m##LMUL_NUM,  e8,  u8m##LMUL_NUM) \
+    HAL_RVV_SEG_TO_MAX( RVV_I8M##LMUL_NUM,    vint8m##LMUL_NUM,  e8,  i8m##LMUL_NUM) \
+    HAL_RVV_SEG_TO_MAX(RVV_U16M##LMUL_NUM,  vuint16m##LMUL_NUM, e16, u16m##LMUL_NUM) \
+    HAL_RVV_SEG_TO_MAX(RVV_I16M##LMUL_NUM,   vint16m##LMUL_NUM, e16, i16m##LMUL_NUM) \
+    HAL_RVV_SEG_TO_MAX(RVV_U32M##LMUL_NUM,  vuint32m##LMUL_NUM, e32, u32m##LMUL_NUM) \
+    HAL_RVV_SEG_TO_MAX(RVV_I32M##LMUL_NUM,   vint32m##LMUL_NUM, e32, i32m##LMUL_NUM) \
+    HAL_RVV_SEG_TO_MAX(RVV_U64M##LMUL_NUM,  vuint64m##LMUL_NUM, e64, u64m##LMUL_NUM) \
+    HAL_RVV_SEG_TO_MAX(RVV_I64M##LMUL_NUM,   vint64m##LMUL_NUM, e64, i64m##LMUL_NUM) \
+    HAL_RVV_SEG_TO_MAX(RVV_F32M##LMUL_NUM, vfloat32m##LMUL_NUM, e32, f32m##LMUL_NUM) \
+    HAL_RVV_SEG_TO_MAX(RVV_F64M##LMUL_NUM, vfloat64m##LMUL_NUM, e64, f64m##LMUL_NUM)
+
+#define HAL_RVV_SEG_TO_MAX(RVV_T, VEC_T, EEW, TYPE)         \
+    HAL_RVV_SEG(RVV_T, VEC_T##x2_t, 2, seg2##EEW, TYPE##x2)
+
+HAL_RVV_SEG_ALL_TYPE(4)
+
+#undef HAL_RVV_SEG_TO_MAX
+#define HAL_RVV_SEG_TO_MAX(RVV_T, VEC_T, EEW, TYPE)         \
+    HAL_RVV_SEG(RVV_T, VEC_T##x2_t, 2, seg2##EEW, TYPE##x2) \
+    HAL_RVV_SEG(RVV_T, VEC_T##x3_t, 3, seg3##EEW, TYPE##x3) \
+    HAL_RVV_SEG(RVV_T, VEC_T##x4_t, 4, seg4##EEW, TYPE##x4)
+
+HAL_RVV_SEG_ALL_TYPE(2)
+
+#undef HAL_RVV_SEG_TO_MAX
+#define HAL_RVV_SEG_TO_MAX(RVV_T, VEC_T, EEW, TYPE)         \
+    HAL_RVV_SEG(RVV_T, VEC_T##x2_t, 2, seg2##EEW, TYPE##x2) \
+    HAL_RVV_SEG(RVV_T, VEC_T##x3_t, 3, seg3##EEW, TYPE##x3) \
+    HAL_RVV_SEG(RVV_T, VEC_T##x4_t, 4, seg4##EEW, TYPE##x4) \
+    HAL_RVV_SEG(RVV_T, VEC_T##x5_t, 5, seg5##EEW, TYPE##x5) \
+    HAL_RVV_SEG(RVV_T, VEC_T##x6_t, 6, seg6##EEW, TYPE##x6) \
+    HAL_RVV_SEG(RVV_T, VEC_T##x7_t, 7, seg7##EEW, TYPE##x7) \
+    HAL_RVV_SEG(RVV_T, VEC_T##x8_t, 8, seg8##EEW, TYPE##x8)
+
+HAL_RVV_SEG_ALL_TYPE(1)
+
+HAL_RVV_SEG_TO_MAX( RVV_U8MF2,   vuint8mf2,  e8,  u8mf2)
+HAL_RVV_SEG_TO_MAX( RVV_I8MF2,    vint8mf2,  e8,  i8mf2)
+HAL_RVV_SEG_TO_MAX(RVV_U16MF2,  vuint16mf2, e16, u16mf2)
+HAL_RVV_SEG_TO_MAX(RVV_I16MF2,   vint16mf2, e16, i16mf2)
+HAL_RVV_SEG_TO_MAX(RVV_U32MF2,  vuint32mf2, e32, u32mf2)
+HAL_RVV_SEG_TO_MAX(RVV_I32MF2,   vint32mf2, e32, i32mf2)
+HAL_RVV_SEG_TO_MAX(RVV_F32MF2, vfloat32mf2, e32, f32mf2)
+
+HAL_RVV_SEG_TO_MAX( RVV_U8MF4,   vuint8mf4,  e8,  u8mf4)
+HAL_RVV_SEG_TO_MAX( RVV_I8MF4,    vint8mf4,  e8,  i8mf4)
+HAL_RVV_SEG_TO_MAX(RVV_U16MF4,  vuint16mf4, e16, u16mf4)
+HAL_RVV_SEG_TO_MAX(RVV_I16MF4,   vint16mf4, e16, i16mf4)
+
+HAL_RVV_SEG_TO_MAX( RVV_U8MF8,   vuint8mf8,  e8,  u8mf8)
+HAL_RVV_SEG_TO_MAX( RVV_I8MF8,    vint8mf8,  e8,  i8mf8)
+
+#undef HAL_RVV_SEG_TO_MAX
+#undef HAL_RVV_SEG_ALL_TYPE
+#undef HAL_RVV_SEG
 
 }}  // namespace cv::cv_hal_rvv
 
